@@ -10,7 +10,7 @@
 var path = require("path");
 var ps = require("child_process");
 var util = require("util");
-var merge = util._extend;
+var merge = Object.assign;
 
 // note, the JVM will stick around when we just kill the spawning process
 // so we have to do a tree kill for the process. unfortunately the "tree-kill"
@@ -100,8 +100,8 @@ function startServer(hostname, port, projectPath, thenDo) {
     } catch (e) { thenDo(e, null); return; }
     thenDo(null, {
         proc: proc,
-        stdout: new Buffer(""),
-        stderr: new Buffer(""),
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
         hostname: undefined, port: undefined, // set when started
         started: false,
         exited: false,
@@ -134,10 +134,22 @@ function start(options, thenDo) {
 
 function stop(serverState, thenDo) {
     if (serverState.exited) { thenDo(null); return; }
-    // FIXME what if when kill doesn't work? At least attach to `close` and
-    // throw a time out error...
+
+    var timeout = setTimeout(function() {
+        // If process hasn't closed after 2 seconds, force kill it
+        if (!serverState.exited && serverState.proc && !serverState.proc.killed) {
+            console.log("Server stop timeout, forcing SIGKILL");
+            kill(serverState.proc.pid, 'SIGKILL');
+            // Give it a moment, then call callback anyway
+            setTimeout(function() {
+                if (thenDo) thenDo(null);
+            }, 500);
+        }
+    }, 2000);
+
     kill(serverState.proc.pid, 'SIGTERM');
     serverState.proc.once('close', function() {
+        clearTimeout(timeout);
         console.log("Stopped nREPL server with pid %s", serverState.proc.pid);
         thenDo && thenDo(null);
     });

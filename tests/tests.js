@@ -1,68 +1,117 @@
-/*global console,require,module,setTimeout,clearTimeout*/
+const { test, before, after } = require('node:test');
+const assert = require('node:assert');
 
-var nreplClient = require('../src/nrepl-client');
-var nreplServer = require('../src/nrepl-server');
-var async = require("async");
+const nreplClient = require('../src/nrepl-client');
+const nreplServer = require('../src/nrepl-server');
+const async = require("async");
 
-var exec = require("child_process").exec;
+const serverOpts = {port: 7889, verbose: true, startTimeout: 20*1000};
+const timeoutDelay = 10*1000;
 
-var serverOpts = {port: 7889, verbose: true, startTimeout: 20*1000},
-    timeoutDelay = 10*1000,
-    timeoutProc, client, server;
+let timeoutProc, client, server;
 
-function createTimeout(test) {
-    return timeoutProc = setTimeout(function() {
-        test.ok(false, 'timeout');
-        test.done();
-    }, timeoutDelay);
+// Convert async.waterfall to Promise
+function waterfall(tasks) {
+    return new Promise((resolve, reject) => {
+        async.waterfall(tasks, (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+        });
+    });
 }
 
-// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-var tests = {
-
-    setUp: function (callback) {
-        async.waterfall([
-            function(next) { nreplServer.start(serverOpts, next); },
-            function(serverState, next) {
-                server = serverState;
-                client = nreplClient.connect({
-                    port: serverState.port,
-                    verbose: true
-                });
-                console.log("client connecting");
-                client.once('connect', function() {
-                    console.log("client connected");
-                    next();
-                });
-            }
-        ], callback);
-    },
-
-    tearDown: function (callback) {
-        // exec("bash -c 'ps aux | grep \":port 7889\" | grep -v grep | awk \"{ print $2 }\" | xargs kill -9'");
-        if (!client) {
-            console.error("client undefined in tearDown?!");
-            callback(); return;
+before(async () => {
+    server = await waterfall([
+        (next) => nreplServer.start(serverOpts, next),
+        (serverState, next) => {
+            server = serverState;
+            client = nreplClient.connect({
+                port: serverState.port,
+                verbose: true
+            });
+            console.log("client connecting");
+            client.once('connect', function() {
+                console.log("client connected");
+                next(null, serverState);
+            });
         }
-        client.once('close', function() {
-            clearTimeout(timeoutProc);
-            nreplServer.stop(server, callback);
-        });
-        client.end();
-    },
+    ]);
+});
 
-    testSimpleEval: function (test) {
-        test.expect(3); createTimeout(test);
-        client.eval('(+ 3 4)', function(err, messages) {
-            console.log("in simple eval");
-            console.log(messages);
-            test.ok(!err, 'Got errors: ' + err);
-            test.equal(messages[0].value, '7');
-            test.deepEqual(messages[1].status, ['done']);
-            test.done();
+after(async () => {
+    // Clear any pending timeouts
+    if (timeoutProc) {
+        clearTimeout(timeoutProc);
+        timeoutProc = null;
+    }
+
+    // Close client if it exists
+    if (client) {
+        await new Promise((resolve) => {
+            const cleanupTimeout = setTimeout(() => {
+                console.log("Client close timeout, forcing cleanup");
+                resolve();
+            }, 2000);
+
+            if (client.destroyed || !client.writable) {
+                clearTimeout(cleanupTimeout);
+                resolve();
+                return;
+            }
+
+            client.once('close', () => {
+                clearTimeout(cleanupTimeout);
+                resolve();
+            });
+
+            try {
+                client.end();
+            } catch (err) {
+                console.error("Error closing client:", err);
+                clearTimeout(cleanupTimeout);
+                resolve();
+            }
         });
     }
-};
 
-module.exports = tests;
+    // Stop server if it exists (server.stop has its own timeout)
+    if (server) {
+        await new Promise((resolve) => {
+            // If server already exited, resolve immediately
+            if (server.exited) {
+                resolve();
+                return;
+            }
+
+            nreplServer.stop(server, () => {
+                resolve();
+            });
+        });
+    }
+});
+
+test('simple eval', async () => {
+    const messages = await new Promise((resolve, reject) => {
+        timeoutProc = setTimeout(() => {
+            reject(new Error('timeout'));
+        }, timeoutDelay);
+
+        client.eval('(+ 3 4)', function(err, messages) {
+            if (timeoutProc) {
+                clearTimeout(timeoutProc);
+                timeoutProc = null;
+            }
+            if (err) reject(err);
+            else resolve(messages);
+        });
+    });
+
+    console.log("in simple eval");
+    console.log(messages);
+
+    assert.ok(messages, 'Should have messages');
+    assert.equal(messages[0].value, '7');
+    assert.deepEqual(messages[1].status, ['done']);
+});
+

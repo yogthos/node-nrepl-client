@@ -4,7 +4,7 @@
   "description": "node client to interact with a Clojure nREPL server.",
   "main": "src/nrepl-client.js",
   "scripts": {
-    "test": "node_modules/nodeunit/bin/nodeunit tests/tests.js --reporter minimal"
+    "test": "node --test tests/tests.js"
   },
   "keywords": [
     "Clojure",
@@ -18,11 +18,10 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "bencode": "^2.0.1",
-    "tree-kill": "~1.2.1"
+    "bencode": "^2.0.3",
+    "tree-kill": "^1.2.2"
   },
   "devDependencies": {
-    "async": "~0.9",
-    "nodeunit": "~0.8"
+    "async": "^3.2.6"
   }
 }

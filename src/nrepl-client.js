@@ -49,7 +49,7 @@ function createMessageStream(verbose, socket) {
     messageStream._readableState.objectMode = true;
     messageStream._bytesLeft = 0;
     messageStream._messageCache = [];
-    messageStream._chunkLeft = new Buffer("");
+    messageStream._chunkLeft = Buffer.alloc(0);
 
     messageStream._transform = function(chunk, encoding, callback) {
         verbose && console.log("nREPL message chunk received (%s bytes)", chunk.length);
